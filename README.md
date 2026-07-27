@@ -1,6 +1,6 @@
 # Redis Caching Patterns
 
-Two production-oriented Redis patterns in ~200 lines of Java, with concurrency tests that make the invariants observable.
+Three production-oriented Redis patterns in ~250 lines of Java, with concurrency tests that make the invariants observable.
 
 > Companion annotated learning repo (with phase-by-phase evolution + experiment logs): [redis-playground-annotated](https://github.com/VengadeshVK/Redis-playground)
 
@@ -43,6 +43,21 @@ Blocked:   15
 
 Exactly 5 pass, 15 rejected — regardless of how tightly the threads race.
 
+### 3. Cross-server cache invalidation — Redis Pub/Sub
+`src/main/java/CacheInvalidator.java`
+
+When any app server changes user data, it PUBLISHes an event on a shared channel. Every other server SUBSCRIBEs and drops its local cache entry — no direct server-to-server calls, no polling.
+
+Demo: 2 subscribers listening, 1 publisher fires an invalidation.
+
+```
+Publisher:   Published '12345_678_view_5001' → 2 subscribers received
+Server-B:    received: 12345_678_view_5001  → deleted 2 cache keys
+Server-C:    received: 12345_678_view_5001  → deleted 0 cache keys  (B was first)
+```
+
+Both servers converge on the same invalidated state. Fire-and-forget delivery — no persistence, no replay. Ideal for cache-coherence signals where losing an occasional message is acceptable (soft TTL fallback catches drift).
+
 See [docs/PATTERNS.md](docs/PATTERNS.md) for the full technical write-up.
 
 ---
@@ -61,17 +76,24 @@ redis-cli PING
 
 ## Running
 
-```bash
-# Cached view counts
-sed -i '' "s/mainClass = 'RateLimiter'/mainClass = 'ViewCountCache'/" build.gradle
-./gradlew run
+Edit `build.gradle` — set `mainClass` to one of `'ViewCountCache'`, `'RateLimiter'`, or `'CacheInvalidator'`.
 
-# Rate limiter
-sed -i '' "s/mainClass = 'ViewCountCache'/mainClass = 'RateLimiter'/" build.gradle
+```bash
 ./gradlew run
 ```
 
-Or edit `build.gradle` manually — the two `mainClass` values are `'ViewCountCache'` and `'RateLimiter'`.
+For the invalidator demo, run 2+ subscribers in separate terminals, then publish from a fourth:
+
+```bash
+# Terminal 1
+./gradlew run --args="server-B"
+
+# Terminal 2
+./gradlew run --args="server-C"
+
+# Terminal 3 (publisher, sends one message and exits)
+./gradlew run --args="publish 12345_678_view_5001"
+```
 
 ## Structure
 
@@ -79,10 +101,11 @@ Or edit `build.gradle` manually — the two `mainClass` values are `'ViewCountCa
 redis-patterns-showcase/
 ├── build.gradle
 ├── src/main/java/
-│   ├── ViewCountCache.java   # soft TTL + compute lock
-│   └── RateLimiter.java      # rolling window + Lua atomic
+│   ├── ViewCountCache.java     # soft TTL + compute lock
+│   ├── RateLimiter.java        # rolling window + Lua atomic
+│   └── CacheInvalidator.java   # cross-server invalidation via Pub/Sub
 ├── docs/
-│   └── PATTERNS.md           # technical explainer
+│   └── PATTERNS.md             # technical explainer
 └── README.md
 ```
 

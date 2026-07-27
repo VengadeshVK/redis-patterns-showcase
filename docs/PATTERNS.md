@@ -78,6 +78,39 @@ Production versions often add a companion integer key (`ratelimit_userA_COUNT`) 
 
 ---
 
+## 3. Cross-server cache invalidation (`CacheInvalidator.java`)
+
+### The problem
+Every app server holds local (or Redis-backed) caches. When ONE server changes underlying data, every OTHER server's cache is now stale. Options:
+- Polling — each server periodically checks for changes. Wasteful.
+- Direct RPC — server A calls servers B/C/D. Tight coupling, must know about all peers.
+- **Pub/Sub** — server A publishes an event; anyone interested reacts.
+
+### The design
+
+- **Publisher** — after committing a mutation, calls `PUBLISH cache_invalidations "<view_key>"`. Returns immediately.
+- **Subscriber (per server)** — a background thread runs `SUBSCRIBE cache_invalidations`. `onMessage` fires whenever an event lands, calls `DEL <view_key>_count <view_key>_expiryTime <view_key>_lock`.
+
+### Trade-offs
+
+- **Fire-and-forget delivery.** If no subscriber is connected at publish time, the message is lost. No replay.
+- **No ordering guarantees across channels** (only ordering within a single channel).
+- **Very low latency.** Sub-millisecond delivery to all listeners.
+
+For cache invalidation this is fine — even if a message is lost, the soft-TTL fallback (Pattern 1) eventually catches the drift. For anything requiring guaranteed delivery, use Kafka.
+
+### Observable behavior
+Two subscribers, one publish:
+```
+Publisher:   Published '<key>' → 2 subscribers received
+Server-B:    received: <key> → deleted 2 cache keys
+Server-C:    received: <key> → deleted 0 cache keys  (B raced first)
+```
+
+Both servers converge on the same state (cache empty). The DEL race is harmless — the end state is what matters.
+
+---
+
 ## Cross-cutting themes
 
 - **Redis is a shared side store.** The source of truth stays in the database.

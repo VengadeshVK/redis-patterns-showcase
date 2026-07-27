@@ -13,7 +13,7 @@ dependencies {
 
 application {
     // Switch between: 'ViewCountCache' and 'RateLimiter'
-    mainClass = 'ViewCountCache'
+    mainClass = 'CacheInvalidator'
 }
 
 java {
