@@ -1,0 +1,21 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'redis.clients:jedis:5.1.0'
+}
+
+application {
+    // Switch between: 'ViewCountCache' and 'RateLimiter'
+    mainClass = 'ViewCountCache'
+}
+
+java {
+    sourceCompatibility = 17
+}
